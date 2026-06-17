@@ -62,10 +62,7 @@ def train_models(args):
                     args.input_structure,
                     args.independent_year,
                     args.leadtime,
-                    args.atp_hours_back,
-                    args.wtp_hours_back,
-                    args.pred_atp_interval,
-                    IPPOffset=args.temperature_list,
+                    args.input_window,
                     cycle=rotation,
                     model=args.model_type,
                     scale=args.scale
