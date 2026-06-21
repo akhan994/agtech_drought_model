@@ -9,199 +9,75 @@ The purpose of this script is to train a drought classification model.
 """
 
 from pathlib import Path
-from datetime import datetime
 
-import keras
-import joblib 
+import numpy as np 
 import pandas as pd
-import tensorflow as tf
-import tensorflow.keras.backend as K
-from keras.callbacks  import TensorBoard, EarlyStopping
-from keras.layers import Input, Dense
-from keras.models import Sequential 
+import plotly.graph_objects as go
+import plotly.express as px
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Input, Dense
+from tensorflow.keras.callbacks import EarlyStopping
 
-from src.helper.training_logger import TrainingLogger
-from src.data_prep.preparing_data import preparingData
-from src.helper.parser import create_parser
+from src.data_prep.preparing_data import preparing_data
 
-tf.config.threading.set_intra_op_parallelism_threads(2)
-tf.config.threading.set_inter_op_parallelism_threads(2)
+# change to args.class_names
+CLASS_NAMES = ["D0", "D1", "D2" "D3", "D4", "no_drought"] 
+OUT_DIR = args.results_path
 
-def train_models(args):
-    
-    if args.start_iteration > args.end_iteration:
-        up_down = -1
-    else:
-        up_down = 1
-        args.end_iteration += 1
-
-    prediction_column_names = []
-    for k in range(args.num_output_neurons):
-        prediction_column_names.append(f'pred_{k+1}')   
-
-    print("\n\n----------------------------- TRAINING ! -----------------------------\n\n")
-
-    for iteration in range(args.start_iteration, args.end_iteration, up_down):  
-            combo_name = f"{args.model_type.lower()}-{args.num_layers}_layers-{args.activation_function}-{args.neurons}_neurons"
-
-            for rotation in args.rotation_list:
-                print(f"RUNNING {args.leadtime}h, {combo_name}-cycle_{rotation}-iteration_{iteration} ...\n")
-                
-                cycle_time_start = datetime.now()
-
-                data_prep_time_start = datetime.now()
-
-                # clearing stale nodes that might be persisting in the 
-                # computation graph, causing corruption; throwing an error
-                K.clear_session()
-
-                """ Manipulating data for AI Model """
-                
-                preparingData_result = preparingData(
-                    args.dataset,
-                    args.input_structure,
-                    args.independent_year,
-                    args.leadtime,
-                    args.input_window,
-                    cycle=rotation,
-                    model=args.model_type,
-                    scale=args.scale
-                )
-                
-                if args.scale:
-                    x_train, y_train, x_val, y_val, x_test, y_test, training_dates, validation_dates, testingDates, testingAir, scaler = preparingData_result
-                else:
-                    x_train, y_train, x_val, y_val, x_test, y_test, training_dates, validation_dates, testingDates, testingAir = preparingData_result
-                    scaler = None
-                
-                """PREPARINGDATA FUNCTION COMPUTE TIME"""
-                data_prep_time_end = datetime.now()
-
-                # Path to folder for visualization results
-                save_path = Path(args.results_folder) / f"{args.leadtime}h" / f"{combo_name}-rotation_{rotation}-iteration_{iteration}"
-                save_path.mkdir(parents=True, exist_ok=True)
-
-                with open(save_path / "data_prep_compute_time.txt", 'w') as compute_time_file:
-                    compute_time_file.write(f"preparingData() compute time: {data_prep_time_end - data_prep_time_start}")
-
-                train_time_start = datetime.now()
-
-                inputShape = x_train[0].shape
-                
-                if args.batch_size == -1:
-                    batch_size = x_train.shape[0]
-
-                else:
-                    batch_size = args.batch_size
-
-                """TRAINING THE MODEL"""
-
-                model = Sequential()                
-
-                # first layer = input layer
-                model.add(Input(shape=(inputShape)))
-
-                # hidden layer(s)
-                for _ in range(args.num_layers):
-                    model.add(Dense(units=args.neurons, 
-                                    activation=args.activation_function, 
-                                    kernel_regularizer=args.kernel_regularizer))
-                
-                # last layer = output layer
-                model.add(Dense(args.num_output_neurons, activation=args.output_activation))
-
-                model.compile(optimizer=keras.optimizers.legacy.Adam(learning_rate=args.lrate), 
-                            loss=args.loss_function, metrics=args.metrics)
-
-                logger = TrainingLogger(save_path / "std_output.txt")
-
-                # Learning rate reducer
-                reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor=args.call_back_monitor, min_delta=args.min_delta,
-                                                                factor=args.factor, patience=args.lr_reducer_patience, min_lr=args.min_lr)
-                
-                # Defining the early stopping
-                early_stopping = EarlyStopping(monitor=args.call_back_monitor,
-                                                    min_delta=args.min_delta,
-                                                    patience=args.early_stop_patience,
-                                                    verbose=args.verbose,
-                                                    mode='auto',
-                                                    restore_best_weights=True)
-                
-                
-                log_dir = save_path / "tensorboard_logs"
-                log_dir.mkdir(parents=True, exist_ok=True)
-                tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1)
-
-                model_callbacks = [early_stopping, reduce_lr, tensorboard_callback, logger]
-
-                # Training the model
-                history = model.fit(x_train, y_train, validation_data=(x_val, y_val), epochs=args.epochs, 
-                                    batch_size=batch_size, callbacks=model_callbacks, verbose=args.verbose) 
-                
-                """TRAINING COMPUTE TIME"""
-                train_time_end = datetime.now()
-
-                # look into re-loading models instead of re-training them again 
-                # use pickle
-                # need to do this for re-producing the bug 
-
-                with open(save_path / "train_compute_time.txt", 'w') as compute_time_file:
-                    compute_time_file.write(f"Model Train Time: {train_time_end-train_time_start}")
-                
-                """LOSS INFORMATION"""
-                loss = history.history['loss']
-                val_loss = history.history['val_loss']
-            
-                losses = pd.DataFrame(columns=['Loss', 'Val_Loss']) 
-                losses['Loss'] = loss
-                losses['Val_Loss'] = val_loss
-                losses.to_csv(save_path / "losses.csv")
-
-                # saving the model to keras file
-                model.save(save_path / f"model_{datetime.now().strftime('%Y%m%d-%H%M%S')}_.keras") 
-                
-                if scaler is not None:
-                    scaler_filename = f"scaler_{args.model_type}_{args.leadtime}h_cycle{rotation}_iter{iteration}.joblib"
-                    joblib.dump(scaler, save_path / scaler_filename)
-
-                train_predictions = model.predict(x_train)
-                val_predictions = model.predict(x_val)
-                # put print here; focus on those 3 days during the cs event of 2021 to ease analysis
-                test_predictions = model.predict(x_test)
-
-                """SAVING PREDICTIONS AND OBSERVATIONS"""
-                train_vs_preds = pd.DataFrame(columns=prediction_column_names, data=train_predictions)
-                val_vs_preds = pd.DataFrame(columns=prediction_column_names, data=val_predictions)
-                test_vs_preds = pd.DataFrame(columns=prediction_column_names, data=test_predictions)
-                
-                train_vs_preds.insert(loc=0, column='date_time', value=training_dates)
-                val_vs_preds.insert(loc=0, column='date_time', value=validation_dates)
-                test_vs_preds.insert(loc=0, column='date_time', value=testingDates)
-
-                train_vs_preds.insert(loc=1, column='target', value=y_train)
-                val_vs_preds.insert(loc=1, column='target', value=y_val)
-                test_vs_preds.insert(loc=1, column='target', value=y_test)
-                
-                """TOTAL CYCLE MODEL COMPUTE TIME"""
-                cycle_time_end = datetime.now()
-                train_path = save_path / "train_datetime_obsv_predictions.csv"
-                val_path = save_path / "val_datetime_obsv_predictions.csv"
-
-                if args.independent_year != "cycle":
-                    test_path = save_path / f"{args.independent_year}_datetime_obsv_predictions.csv"
-                else:
-                    test_path = save_path / "test_datetime_obsv_predictions.csv"
-
-                train_vs_preds.to_csv(train_path)
-                val_vs_preds.to_csv(val_path)
-                test_vs_preds.to_csv(test_path)
-    
-                with open(save_path / "cycle_compute_time.txt", 'w') as compute_time_file:
-                    compute_time_file.write(f"Total Cycle Time: {cycle_time_end-cycle_time_start}")
+def build_model(input_dim, num_classes):
+    model = Sequential([
+        Input(shape=(input_dim,)), 
+        Dense(num_neurons, activation=args.activation),
+        Dense(num_classes, activation=args.output_activation)
+    ])
+    model.compile(optimizer=args.optimizer, loss=args.loss_functiion, metrics=args.metrics)
+    return model
 
 def main():
-    print("yippee!")
-    pass
+   OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+   (x_train, y_traiin, x_val, y_val, x_test, y_test, train_dates, val_dates, test_dates, scaler) = preparing_data(
+       data_path=None,
+       feature_cols=args.feature_list,
+       input_window=args.input_window,
+       leadtime=args.leadtime,
+       scale=args.scaler,
+       verbose=args.verbose
+   )
+
+   model = build_model(x_train.shape[1], y_train.shape[1])
+   early = EarlyStopping(monitor=args.moonitor, patience=args.patience, restore_best_weights=True)
+   history = model.fit(
+       x_train, y_train,
+       validdation_data=(x_val, y_val),
+       epochs=args.epochs, batch_size=args.batch_size, callbacks=args.callbacks, verbose=args.verbose
+   )
+   print(f"trained {len(historyyy.history['loss'])} epochs.")
+   
+   probs = model.predict(x_test, verbose=0)
+   y_pred = probs.argmax(axis=1)
+   y_true = y_test.argmax(axis=1)
+
+   acc = accuracyy_score(y_true, y_red)
+   macro_f1 = f1_score(y_true, y_pred, average="macro")
+   report = classification_report(y_true, y_pred, labels=range(len(CLASS_NAMES)),
+                                  target_names=CLASS_NAMES,
+                                  zero_division=0)
+   print(f"test accuracy={acc:.3f} macro-F1={macro_f1:.3f}")
+
+   (OUT_DIR / "metrics.txt").write_text(
+       f"test accuracy: {acc:.4f}\nmacro-F1: {macro_f1:.4f}\n\n{report}\n")
+   
+   pred_df = pd.DataFrame({
+       "weel_start": pd.to_datetime(test_dates),
+       "true": [CLASS_NAMES[i] for i in y_true],
+       "pred": [CLASS_NAMES[i] for i in y_pred]
+   })
+
+   for j, name in enuumerate(CLASS_NAMES):
+    pred_df[f"p_{name}"] = probs[:, j].round(4)
+    pred_df.to_csv(OUT_DIR / "test_predictions.csv", index=False)
 
 def show_keys(args):
     args_dict = vars(args)
