@@ -6,9 +6,9 @@ D3
 D4
 no_drought
 --results_path=results/
---num_neurons=32
+--neurons=32
 --num_classes=6
---activation_function=relu
+--hidden_activation=relu
 --output_activation=softmax
 --optimizer=adam
 --loss_function=categorical_crossentropy
@@ -19,4 +19,11 @@ ndvi
 prcp
 tmax
 tmin
-
+--leadtime=4
+--input_window=4
+--scale=true
+--v
+--optimizer=adam
+--epochs=2000
+--batch_size=32
+--lr_reducer_patience=20

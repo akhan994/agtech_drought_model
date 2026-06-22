@@ -47,4 +47,4 @@ def create_parser():
     parser.add_argument('--min_lr',                             type=float,         default=0.00001,                        help="placeholder text")
     parser.add_argument('--temperature_list', nargs='+',        type=float,         default=None,                           help="List of temperature perturbations. For perfect prognosis, set to 0.0.")
     parser.add_argument('--scale',                              action='store_true',                                        help="flag whether we want to scale the data using StandardScaler.")
-    parser.add_argument('--class_names', nargs='+',             type=string,        default=None,                           help="list the class names for a classifier model")
+    parser.add_argument('--class_names', nargs='+',             type=str,        default=None,                           help="list the class names for a classifier model")

@@ -52,11 +52,24 @@ def main():
         verbose=1,
     )
 
+    model_datasplit = {
+        "x_train":x_train,
+        "y_train":y_train,
+        "x_val":x_val,
+        "y_val":y_val,
+        "x_test":x_test,
+        "y_test":y_test,
+        "train_dates":train_dates,
+        "val_dates":val_dates,
+        "test_dates":test_dates,
+        "scaler":scaler
+    }
+
     # ---- train ----
-    model = build_model(x_train.shape[1], y_train.shape[1])
+    model = build_model(x_train.shape[1], model_datasplit.get("y_train".shape[1])
     early = EarlyStopping(monitor="val_loss", patience=20, restore_best_weights=True)
     history = model.fit(
-        x_train, y_train,
+        model_datasplit.get("x_train"), model_datasplit.get("y_train"),
         validation_data=(x_val, y_val),
         epochs=200, batch_size=32, callbacks=[early], verbose=0,
     )
