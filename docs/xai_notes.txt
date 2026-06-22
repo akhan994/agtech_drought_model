@@ -1,0 +1,110 @@
+================================================================================
+EXPLAINABLE AI (XAI) — REFERENCE NOTES  for the drought classifier
+================================================================================
+
+WHY XAI HERE
+  - Trust: stakeholders believe a forecast more when they see WHY it was made.
+  - Debugging: reveals if the model leans on something it shouldn't (e.g. relying
+    almost entirely on "current drought persists" via the usdm_severity feature).
+  - Science: "which drivers most predict drought onset?" is itself a finding.
+  - Our inputs are human-readable (each is a weather/veg variable at a week-lag),
+    so explanations come out interpretable.
+
+--------------------------------------------------------------------------------
+CORE CONCEPTS (the vocabulary)
+--------------------------------------------------------------------------------
+  INTRINSIC (glass-box) vs POST-HOC
+    - Intrinsic: model is understandable by design (linear coeffs, tree splits).
+    - Post-hoc: model is a black box (our neural net); a SEPARATE technique
+      explains it after training. All methods below are post-hoc.
+
+  GLOBAL vs LOCAL   (the key split)
+    - Global: which features matter most OVERALL, across all predictions.
+    - Local:  why the model predicted THIS class for THIS specific week.
+    - You usually want both.
+
+  FEATURE IMPORTANCE / ATTRIBUTION
+    - A number per input for how much it influenced the output.
+
+  MODEL-AGNOSTIC vs MODEL-SPECIFIC
+    - Agnostic: treats the model as a black box (works on anything).
+    - Specific: uses model internals (tree splits, NN gradients).
+
+  FAITHFULNESS vs PLAUSIBILITY  (a caveat)
+    - An explanation can look sensible to a human (plausible) without actually
+      reflecting what the model did (faithful). Don't over-trust pretty plots.
+
+--------------------------------------------------------------------------------
+KEY PRINCIPLE: ALL OF #1 / #2 / #4 ARE POST-HOC -> NO RETRAINING
+--------------------------------------------------------------------------------
+  Train ONCE, save the model (.keras) AND the scaler (.joblib).
+  The explainability step LOADS them (like inference) and only calls .predict.
+  You must scale the data with the SAME saved scaler — the model only understands
+  scaled inputs. Explanations therefore live in the SCALED feature space; label
+  features clearly (e.g. prcp_w-3) so plots are readable.
+
+--------------------------------------------------------------------------------
+THE METHODS WE'RE USING
+--------------------------------------------------------------------------------
+#1  PERMUTATION FEATURE IMPORTANCE   (global, easiest, no new deps)
+    Idea: shuffle ONE feature column in the TEST set, re-measure macro-F1; a big
+          drop = important feature. Repeat per feature. Uses the trained model
+          (predict only) — does NOT retrain.
+    Notes:
+      - Compute on TEST/VAL data (reflects generalization), not train.
+      - Score with MACRO-F1 (imbalance), not accuracy.
+      - GROUPED permutation: our 4 weekly lags of a variable are correlated, so
+        shuffle all lags of one variable together to get "precip importance"
+        rather than 16 noisy per-lag numbers.
+      - sklearn.inspection.permutation_importance expects a sklearn estimator;
+        a raw Keras model isn't one -> either wrap with scikeras OR do the
+        manual shuffle loop (easy, dependency-free; recommended).
+
+#2  SHAP   (global + local, the showcase, medium effort)
+    Idea: assigns each feature a contribution to each prediction (Shapley values
+          from game theory). Great built-in plots.
+    Notes:
+      - For our MLP: shap.KernelExplainer(model.predict, background)  [agnostic]
+        or shap.DeepExplainer  [NN-specific, faster].
+      - background = small sample of TRAIN data (the reference it compares to).
+      - Multiclass: shap_values is a LIST (one array per class) — pick the class
+        of interest (e.g. D4) for plots.
+      - summary_plot = global; force_plot / waterfall = local (one week).
+      - Needs `shap` added to environment.yml.
+
+#4  PARTIAL DEPENDENCE (PDP)   (easy, intuitive)
+    Idea: shows HOW predictions change as one feature varies (e.g. as 4-week
+          precip deficit grows, P(severe drought) rises).
+    Notes:
+      - sklearn.inspection.PartialDependenceDisplay needs a sklearn estimator;
+        for Keras, compute manually: for each value v in a grid, set that feature
+        column = v across all rows, predict, average the class probability.
+      - Plot avg predicted prob vs v (one curve per class, or just the class of
+        interest). No new deps.
+
+--------------------------------------------------------------------------------
+RECOMMENDED ORDER
+--------------------------------------------------------------------------------
+  1) Permutation importance  (half a day, no deps) -> global ranking of inputs.
+  2) SHAP                     (summary plot + a couple of local examples).
+  3) Partial dependence       (direction of effect for the top features).
+  (If you run a RandomForest baseline, its .feature_importances_ is free.)
+
+--------------------------------------------------------------------------------
+CAVEATS TO REMEMBER
+--------------------------------------------------------------------------------
+  - Correlated features (weekly lags, Palmer indices) split/destabilize
+    importance -> interpret variable GROUPS, not single lags.
+  - Explanations describe the MODEL, not physical truth. Say "the model relies
+    on NDVI," not "NDVI causes drought."
+
+--------------------------------------------------------------------------------
+RESOURCES
+--------------------------------------------------------------------------------
+  sklearn inspection (perm. importance + partial dependence):
+    https://scikit-learn.org/stable/modules/permutation_importance.html
+  SHAP docs:
+    https://shap.readthedocs.io/
+  Interpretable ML book (Molnar, free, best beginner reference):
+    https://christophm.github.io/interpretable-ml-book/
+================================================================================

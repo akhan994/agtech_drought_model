@@ -89,6 +89,18 @@ def build_weekly_master(verbose=0, save_path=None):
                   .merge(weekly_temp, on="week_start", how="left")
                   .merge(weekly_ndvi, on="week_start", how="left"))
 
+    # ---- past drought state as a usable INPUT feature ----------------------
+    # The USDM class is highly predictive of future drought (a "persistence" signal).
+    # It is safe to use as a feature because windowing only ever puts PAST weeks (<= t)
+    # into X while the target is the class at t+leadtime (no leakage as long as L >= 1).
+    # NOTE on encoding: class_number sets no_drought=5 (i.e. ABOVE D4), which is NOT
+    # monotonic in severity. Fed raw to a model as a number, that ordering misleads it.
+    # So we remap to an ordered 0..5 scale for use as a feature. class_number itself
+    # stays untouched as the label/target.
+    #   put "usdm_severity" in feature_cols to use it.
+    master_df["usdm_severity"] = master_df["class_number"].map(
+        {5: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5})
+
     # cut to the NDVI-covered span (NDVI ends 2024) so we never extrapolate it
     master_df = master_df[master_df["week_start"] <= ndvi["date"].max()].reset_index(drop=True)
 
