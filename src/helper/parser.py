@@ -9,7 +9,7 @@ def create_parser():
     parser.add_argument('--model_type',                         type=str,           default='mlp',                          help="Model Architecture type")
     
     # paths
-    parser.add_argument('--results_folder',                     type=str,           default='results',                      help="Folder path to which to save the results to.")
+    parser.add_argument('--results_path',                     type=str,           default='results',                      help="Folder path to which to save the results to.")
     parser.add_argument('--dataset',                            type=str,           default='whole',                        help="Which dataset should get loaded into the model?")
     parser.add_argument('--inference_csv',                      type=str,        default=None,                              help="the csv to predict on")
 
@@ -47,3 +47,4 @@ def create_parser():
     parser.add_argument('--min_lr',                             type=float,         default=0.00001,                        help="placeholder text")
     parser.add_argument('--temperature_list', nargs='+',        type=float,         default=None,                           help="List of temperature perturbations. For perfect prognosis, set to 0.0.")
     parser.add_argument('--scale',                              action='store_true',                                        help="flag whether we want to scale the data using StandardScaler.")
+    parser.add_argument('--class_names', nargs='+',             type=string,        default=None,                           help="list the class names for a classifier model")

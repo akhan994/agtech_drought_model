@@ -28,8 +28,8 @@ OUT_DIR = args.results_path
 def build_model(input_dim, num_classes):
     model = Sequential([
         Input(shape=(input_dim,)), 
-        Dense(num_neurons, activation=args.activation),
-        Dense(num_classes, activation=args.output_activation)
+        Dense(args.num_neurons, activation=args.activation),
+        Dense(args.num_classes, activation=args.output_activation)
     ])
     model.compile(optimizer=args.optimizer, loss=args.loss_functiion, metrics=args.metrics)
     return model
