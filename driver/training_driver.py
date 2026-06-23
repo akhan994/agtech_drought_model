@@ -17,18 +17,22 @@ import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from tensorflow.keras import Sequential
-from tensorflow.keras.layers import Input, Dense
+from tensorflow.keras.layers import Input, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 
 from src.data_prep.preparing_data import preparing_data
 
 def build_model(input_dim, args):
-    model = Sequential([
-        Input(shape=(input_dim,)), 
-        Dense(args.neurons, activation=args.hidden_activation),
-        Dense(args.num_output_neurons, activation=args.output_activation)
-    ])
-    model.compile(optimizer=args.optimizer, loss=args.loss_function, metrics=args.metrics)
+    # ordinal regression: a single LINEAR output predicting the severity RANK,
+    # trained with MSE (we solve the ordinal-classification task with a regression head).
+    model = Sequential([Input(shape=(input_dim,))])
+    for _ in range(args.num_layers):
+        model.add(Dense(args.neurons, activation=args.hidden_activation))
+        if args.dropout:
+            model.add(Dropout(args.dropout))
+    model.add(Dense(1, activation="linear"))
+    model.compile(optimizer=Adam(learning_rate=args.lrate), loss=args.loss_function, metrics=args.metrics)
     return model
 
 def main(args):
@@ -41,8 +45,13 @@ def main(args):
        input_window=args.input_window,
        leadtime=args.leadtime,
        scale=args.scale,
+       label_col="usdm_severity",   # ordinal target = monotonic severity rank (0..5)
        verbose=args.verbose)
-   
+
+   # regression target = the severity rank as a float (recover it from the one-hot)
+   y_train = y_train.argmax(axis=1).astype("float32")
+   y_val = y_val.argmax(axis=1).astype("float32")
+
    model_datasplit = {
         "x_train":x_train,
         "y_train":y_train,

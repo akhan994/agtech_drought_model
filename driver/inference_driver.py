@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.metrics import (accuracy_score, f1_score, confusion_matrix, classification_report,
+                             cohen_kappa_score, mean_absolute_error)
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Input, Dense
 from tensorflow.keras.callbacks import EarlyStopping
@@ -29,33 +30,37 @@ def inference(args):
        input_window=args.input_window,
        leadtime=args.leadtime,
        scale=False,
+       label_col="usdm_severity",   # ordinal target = severity rank (0..5)
        verbose=args.verbose)
 
    x_test = scaler.transform(x_test)   # apply the SAME scaler used during training
 
-   probs = model.predict(x_test, verbose=0)
-   y_pred = probs.argmax(axis=1)
+   # ordinal regression: the model outputs a continuous severity -> round/clip to a rank
+   n_classes = len(args.class_names)
+   raw = model.predict(x_test, verbose=0).ravel()
+   y_pred = np.clip(np.rint(raw), 0, n_classes - 1).astype(int)
    y_true = y_test.argmax(axis=1)
 
-   acc = accuracy_score(y_true, y_pred)
+   qwk = cohen_kappa_score(y_true, y_pred, weights="quadratic")
    macro_f1 = f1_score(y_true, y_pred, average="macro")
-   report = classification_report(y_true, y_pred, labels=range(len(args.class_names)),
+   mae = mean_absolute_error(y_true, y_pred)
+   acc = accuracy_score(y_true, y_pred)
+   report = classification_report(y_true, y_pred, labels=range(n_classes),
                                   target_names=args.class_names,
                                   zero_division=0)
-   print(f"test accuracy={acc:.3f} macro-F1={macro_f1:.3f}")
+   print(f"test QWK={qwk:.3f}  macro-F1={macro_f1:.3f}  MAE={mae:.3f}  acc={acc:.3f}")
 
    (args.results_path / "metrics.txt").write_text(
-       f"test accuracy: {acc:.4f}\nmacro-F1: {macro_f1:.4f}\n\n{report}\n")
-   
+       "ordinal regression on severity rank\n"
+       f"QWK (primary): {qwk:.4f}\nmacro-F1: {macro_f1:.4f}\n"
+       f"MAE (ranks): {mae:.4f}\naccuracy: {acc:.4f}\n\n{report}\n")
+
    pred_df = pd.DataFrame({
        "week_start": pd.to_datetime(test_dates),
        "true": [args.class_names[i] for i in y_true],
        "pred": [args.class_names[i] for i in y_pred],
        "true_idx": y_true,
        "pred_idx": y_pred,
+       "raw_pred": raw.round(3),
    })
-   
-   for j, name in enumerate(args.class_names):
-        pred_df[f"p_{name}"] = probs[:, j].round(4)
-
    pred_df.to_csv(args.results_path / "test_predictions.csv", index=False)

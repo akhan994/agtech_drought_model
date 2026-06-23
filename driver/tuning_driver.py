@@ -1,24 +1,17 @@
 """
-tuning_driver_randomsearch.py  -  READY-TO-RUN hyperparameter tuning.
+tuning_driver_ordinal_QWK.py - QWK-objective copy of tuning_driver_ordinal.py.
 
-Structure (the nested design you described):
-    OUTER grid over input_window      -> changes the DATA SHAPE, so it must be a
-                                         manual loop (RandomizedSearchCV can't tune it).
-    INNER RandomizedSearchCV          -> tunes the MODEL hyperparameters, with:
-        - scikeras KerasClassifier wrapping the MLP (makes it sklearn-compatible)
-        - StandardScaler inside a Pipeline -> scaler is fit PER CV FOLD (no leakage)
-        - cv = TimeSeriesSplit          -> chronological folds (no future leakage)
-        - scoring = "f1_macro"          -> the metric we care about (class imbalance)
+Identical to driver/tuning_driver_ordinal.py (same regression-on-rank model, same
+search space, same window grid, same RANDOM_STATE -> same candidate combos), EXCEPT
+it scores each combo by Quadratic-Weighted Kappa (QWK) instead of macro-F1. QWK
+directly rewards staying close on the severity scale, which is the point of going
+ordinal.
+
+Because the regressor outputs continuous values, the scorer ROUNDS to the nearest
+rank before computing kappa (you cannot pass raw floats to cohen_kappa_score).
 
 Run from the repo root:
-    python -m driver.tuning_driver_randomsearch
-
-Requires `scikeras` (added to environment.yml):
-    conda run -n drought pip install scikeras
-
-NOTE: this is a SEPARATE file from your manual `tuning_driver.py`; it's the
-RandomizedSearchCV alternative so you can compare. Settings are constants below
-(wire them to the parser/config later).
+    python -m driver.tuning_driver_ordinal_QWK
 """
 
 import json
@@ -31,51 +24,70 @@ from scipy.stats import loguniform
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
-from scikeras.wrappers import KerasClassifier
+from sklearn.metrics import make_scorer, cohen_kappa_score, f1_score
+from scikeras.wrappers import KerasRegressor
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Input, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 
 from src.data_prep.preparing_data import preparing_data
 
 # ----------------------------- settings (edit here) --------------------------
-FEATURE_COLS = ["prcp", "tmax", "tmin", "ndvi", "usdm_severity"]
+FEATURE_COLS = ["prcp", "tmax", "tmin", "ndvi", "pdsi", "phdi", "pmdi", "soil_moisture", "usdm_severity"]
 LEADTIME     = 4
 NUM_CLASSES  = 6
-WINDOW_SIZES = [4, 8, 12]      # OUTER grid (data-shape hyperparameter)
-N_ITER       = 10              # random model-combos tried per window
-CV_SPLITS    = 3              # TimeSeriesSplit folds
-EPOCHS       = 40
+WINDOW_SIZES = [4, 8, 12, 24]   # OUTER grid (input_window)
+N_ITER       = 30               # random model-combos tried per window
+CV_SPLITS    = 3                # TimeSeriesSplit folds
+EPOCHS       = 200              # cap only -- EarlyStopping usually stops far sooner
+EARLY_STOP_PATIENCE = 15
 RANDOM_STATE = 0
-RESULTS_DIR  = Path("results") / ("tuning_" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+RESULTS_DIR  = Path("results") / ("tuning_ordinal_qwk_" + datetime.now().strftime("%Y%m%d-%H%M%S"))
 
-# inner search space. Pipeline step is named "clf", so keys are "clf__<param>";
-# scikeras routes num_layers/neurons/dropout/learning_rate into build_model().
+# inner search space. Pipeline step is "reg", so keys are "reg__<param>".
 PARAM_SPACE = {
-    "clf__num_layers":    [1, 2, 3],
-    "clf__neurons":       [16, 32, 64, 128],
-    "clf__dropout":       [0.0, 0.2, 0.4],
-    "clf__learning_rate": loguniform(1e-4, 1e-2),
-    "clf__batch_size":    [16, 32, 64],
+    "reg__num_layers":    [1, 2, 3],
+    "reg__neurons":       [16, 32, 64, 128],
+    "reg__activation":    ["relu", "selu", "leaky_relu"],
+    "reg__dropout":       [0.0, 0.2, 0.4],
+    "reg__learning_rate": loguniform(1e-4, 1e-2),
+    "reg__batch_size":    [16, 32, 64],
 }
 
 
-# ----------------------------- model builder (scikeras-compatible) -----------
-def build_model(meta, num_layers, neurons, dropout, learning_rate):
-    # scikeras injects `meta` automatically; it carries the fitted data's shape.
+# ----------------------------- model builder (regression head) ---------------
+def build_model(meta, num_layers, neurons, activation, dropout, learning_rate):
     n_features = meta["n_features_in_"]
-    n_classes = meta["n_classes_"]
     model = Sequential([Input(shape=(n_features,))])
     for _ in range(num_layers):
-        model.add(Dense(neurons, activation="relu"))
+        model.add(Dense(neurons, activation=activation))
         if dropout:
             model.add(Dropout(dropout))
-    model.add(Dense(n_classes, activation="softmax"))
-    # sparse_* lets us feed INTEGER labels (no one-hot); equivalent to
-    # categorical_crossentropy for single-label classification.
-    model.compile(optimizer=Adam(learning_rate=learning_rate),
-                  loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    model.add(Dense(1, activation="linear"))     # single continuous severity output
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss="mse", metrics=["mae"])
     return model
+
+
+# ----------------------------- ordinal QWK scorer ----------------------------
+def _round_ranks(y_true, y_pred):
+    yp = np.clip(np.rint(np.ravel(y_pred)), 0, NUM_CLASSES - 1).astype(int)
+    yt = np.rint(np.ravel(y_true)).astype(int)
+    return yt, yp
+
+def ordinal_qwk(y_true, y_pred):
+    """Round continuous predictions to ranks, then QWK."""
+    yt, yp = _round_ranks(y_true, y_pred)
+    return cohen_kappa_score(yt, yp, weights="quadratic")
+
+def ordinal_macro_f1(y_true, y_pred):
+    """Round continuous predictions to ranks, then macro-F1."""
+    yt, yp = _round_ranks(y_true, y_pred)
+    return f1_score(yt, yp, average="macro")
+
+# QWK is the SELECTION metric (combos are ranked/picked by it). macro_f1 is tracked
+# alongside for human analysis only -- it does NOT influence which combo is chosen.
+SCORERS = {"qwk": make_scorer(ordinal_qwk), "macro_f1": make_scorer(ordinal_macro_f1)}
 
 
 # ----------------------------- main ------------------------------------------
@@ -84,49 +96,46 @@ def main():
     all_rows, best_overall = [], None
 
     for W in WINDOW_SIZES:
-        # build the windowed data for THIS window size; scale=False because the
-        # Pipeline's StandardScaler handles scaling inside each CV fold.
         x_tr, y_tr, x_va, y_va, x_te, y_te, *_ = preparing_data(
             feature_cols=FEATURE_COLS, input_window=W, leadtime=LEADTIME,
-            scale=False, num_classes=NUM_CLASSES)
+            scale=False, label_col="usdm_severity", num_classes=NUM_CLASSES)
 
-        # CV pool = train + val (still chronological: train precedes val).
-        # test is left untouched for a later final evaluation.
         X = np.concatenate([x_tr, x_va])
-        y = np.concatenate([y_tr, y_va]).argmax(axis=1)   # integer labels for scikeras
+        # target = the severity rank as a float (recover from one-hot via argmax)
+        y = np.concatenate([y_tr, y_va]).argmax(axis=1).astype("float32")
 
-        clf = KerasClassifier(
+        reg = KerasRegressor(
             model=build_model, epochs=EPOCHS, verbose=0,
-            class_weight="balanced",   # inverse-frequency weights, computed PER FOLD -> counters imbalance
-            num_layers=1, neurons=32, dropout=0.0, learning_rate=1e-3,  # defaults (tuned below)
+            validation_split=0.15,
+            callbacks=[EarlyStopping(monitor="val_loss", patience=EARLY_STOP_PATIENCE,
+                                     restore_best_weights=True)],
+            num_layers=1, neurons=32, activation="relu", dropout=0.0, learning_rate=1e-3,
         )
-        pipe = Pipeline([("scaler", StandardScaler()), ("clf", clf)])
+        pipe = Pipeline([("scaler", StandardScaler()), ("reg", reg)])
 
-        search = RandomizedSearchCV(pipe, 
-                                    PARAM_SPACE, 
-                                    n_iter=N_ITER, 
-                                    scoring="f1_macro",
-                                    cv=TimeSeriesSplit(n_splits=CV_SPLITS), 
-                                    random_state=RANDOM_STATE,
-                                    n_jobs=1, 
-                                    refit=False, 
-                                    verbose=1,   # n_jobs=1: TF isn't fork-safe
-        )
+        # multi-metric: rank by QWK, but record macro-F1 for every combo too.
+        # (refit=False + multi-metric -> best_* attrs aren't set, so we pick the
+        #  winner ourselves via argmax of the QWK column in cv_results_.)
+        search = RandomizedSearchCV(pipe, PARAM_SPACE, n_iter=N_ITER, scoring=SCORERS,
+                                    refit=False, cv=TimeSeriesSplit(n_splits=CV_SPLITS),
+                                    random_state=RANDOM_STATE, n_jobs=1, verbose=1)
         search.fit(X, y)
 
-        print(f"[window {W}] best macro-F1={search.best_score_:.3f}  {search.best_params_}")
+        cvr = search.cv_results_
+        qwk_scores, mf1_scores = cvr["mean_test_qwk"], cvr["mean_test_macro_f1"]
+        best_i = int(np.argmax(qwk_scores))
+        print(f"[window {W}] best QWK={qwk_scores[best_i]:.3f} "
+              f"(macroF1={mf1_scores[best_i]:.3f})  {cvr['params'][best_i]}")
 
-        for params, score in zip(search.cv_results_["params"],
-                                 search.cv_results_["mean_test_score"]):
-            all_rows.append({"input_window": W, "mean_macro_f1": score, **params})
+        for params, q, m in zip(cvr["params"], qwk_scores, mf1_scores):
+            all_rows.append({"input_window": W, "mean_qwk": q, "mean_macro_f1": m, **params})
 
-        cand = {"input_window": W, "mean_macro_f1": float(search.best_score_),
-                **search.best_params_}
-        if best_overall is None or cand["mean_macro_f1"] > best_overall["mean_macro_f1"]:
+        cand = {"input_window": W, "mean_qwk": float(qwk_scores[best_i]),
+                "mean_macro_f1": float(mf1_scores[best_i]), **cvr["params"][best_i]}
+        if best_overall is None or cand["mean_qwk"] > best_overall["mean_qwk"]:
             best_overall = cand
 
-    # rank every (window, combo) trial and save
-    results = pd.DataFrame(all_rows).sort_values("mean_macro_f1", ascending=False)
+    results = pd.DataFrame(all_rows).sort_values("mean_qwk", ascending=False)
     results.to_csv(RESULTS_DIR / "tuning_results.csv", index=False)
     with open(RESULTS_DIR / "best_hyperparameters.json", "w") as f:
         json.dump(best_overall, f, indent=2, default=str)

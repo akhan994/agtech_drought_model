@@ -1,0 +1,15 @@
+# Python caches
+__pycache__/
+*.pyc
+
+# Experiment outputs (regenerated every run)
+/results/
+/keras_files/
+
+# Scratch / not for main
+/deprecated_maybe/
+/data_cleaning/
+/driver/explainability_driver.py
+/src/helper/training_logger.py
+_tmp_*
+~$*

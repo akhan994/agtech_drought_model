@@ -37,6 +37,7 @@ def create_parser():
     parser.add_argument('--kernel_regularizer',                 type=str,           default="l2",                           help="placeholder text")
     parser.add_argument('--num_layers',                         type=int,           default=1,                              help="number of hidden layers")
     parser.add_argument('--neurons',                            type=int,           default=32,                             help="neurons per layer")
+    parser.add_argument('--dropout',                            type=float,         default=0.0,                            help="dropout rate after each hidden layer (0 = none)")
     
     parser.add_argument('--start_iteration',                    type=int,           default=1,                              help="starting training iteration")
     parser.add_argument('--end_iteration',                      type=int,           default=30,                             help="ending training iteration")
