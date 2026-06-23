@@ -9,7 +9,57 @@ WHAT THIS IS
       no_drought, D0, D1, D2, D3, D4   (D4 = most severe)
 
   You can run experiments by editing ONE config file and running ONE
-  command -- no heavy coding needed.
+  command -- no heavy coding needed. This guide assumes no prior
+  experience with GitHub, VS Code, or Python.
+
+THE TOOLS YOU'LL USE (quick orientation)
+  - GitHub   : the website where our project lives online. It stores the
+               code and every change, and lets each person work on their
+               own copy without disturbing others.
+  - VS Code  : the program on your computer where you view/edit files and
+               type commands.
+  - Git      : a tool (used in VS Code's terminal) that syncs your
+               computer with GitHub.
+  - Miniconda: sets up the exact Python + libraries the model needs.
+
+---------------------------------------------------------------------
+GITHUB BASICS (just what you need)
+---------------------------------------------------------------------
+  - Make a free account at  https://github.com , then send your username
+    to Ayesha so she can add you to the project (you must be added before
+    you can contribute).
+
+  - The project page (the "repo", short for repository) lists all the
+    folders and files. Click any file to read it in your browser.
+
+  - BRANCHES = separate workspaces.
+      * "main" is the shared, working version everyone relies on.
+      * You make your OWN branch to experiment in, so you can try things
+        freely without affecting anyone else's work.
+      * The branch menu is near the top-left of the repo's file list.
+
+  - Words you'll run into:
+      commit       = a saved snapshot of your changes, with a short note
+      push         = upload your commits to GitHub
+      pull         = download the latest changes from GitHub
+      pull request = "please review my branch and add it to main" (a "PR")
+
+  - You'll mostly do commit / push / pull by typing commands (below), not
+    by clicking around the website.
+
+---------------------------------------------------------------------
+VS CODE (your workspace)
+---------------------------------------------------------------------
+  - Download and install it:  https://code.visualstudio.com
+
+  - The three parts you'll actually use:
+      * EXPLORER (left sidebar): the file/folder tree. Click a file to open it.
+      * EDITOR   (middle): where a file opens so you can read/change it.
+      * TERMINAL (bottom): where you type commands. Open it from the top
+        menu:  Terminal > New Terminal.  All the commands in the steps
+        below are typed here.
+
+  - (Optional: when VS Code suggests the "Python" extension, say yes.)
 
 ---------------------------------------------------------------------
 1. ONE-TIME SETUP
@@ -92,5 +142,8 @@ REMINDERS
 ---------------------------------------------------------------------
   - Always run from the top "agtech_drought_model" folder.
   - Always have the env active first:  conda activate drought
-  - If a run errors, copy the full message and send it to Ayesha.
+  - If a run errors, copy the full message and send it to Ayesha OR 
+  - use VSCode's AI to help. It's built into the editor so it can view
+  - all the files, so it can really help with debugging and fixing things,
+  - especially things like syntax errors. 
 =====================================================================
