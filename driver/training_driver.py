@@ -9,9 +9,10 @@ The purpose of this script is to train a drought classification model.
 """
 
 from pathlib import Path
-
+import joblib
 import numpy as np 
 import pandas as pd
+from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
@@ -25,13 +26,14 @@ def build_model(input_dim, args):
     model = Sequential([
         Input(shape=(input_dim,)), 
         Dense(args.neurons, activation=args.hidden_activation),
-        Dense(args.num_classes, activation=args.output_activation)
+        Dense(args.num_output_neurons, activation=args.output_activation)
     ])
     model.compile(optimizer=args.optimizer, loss=args.loss_function, metrics=args.metrics)
     return model
 
 def main(args):
    args.results_path.mkdir(parents=True, exist_ok=True)
+   args.keras_path.mkdir(parents=True, exist_ok=True)
 
    (x_train, y_train, x_val, y_val, x_test, y_test, train_dates, val_dates, test_dates, scaler) = preparing_data(
        data_path=None,
@@ -54,14 +56,26 @@ def main(args):
         "scaler":scaler
     }
    
-   model = build_model(model_datasplit.get("x_train").shape[1], model_datasplit.get("y_train").shape[1])
-   early = EarlyStopping(monitor=args.monitor, patience=args.lr_reducer_patience, restore_best_weights=True)
+   model = build_model(model_datasplit.get("x_train").shape[1], args)
+
+   early = EarlyStopping(monitor=args.call_back_monitor, patience=args.early_stop_patience, restore_best_weights=True)
    history = model.fit(
        model_datasplit.get("x_train"), model_datasplit.get("y_train"),
        validation_data=(model_datasplit.get("x_val"), model_datasplit.get("y_val")),
-       epochs=args.epochs, batch_size=args.batch_size, callbacks=early, 
+       epochs=args.epochs, batch_size=args.batch_size, callbacks=[early], 
        verbose=args.verbose
    )
+   
+   # per-run directory: the timestamp keeps runs distinct, while the fixed
+   # filenames inside stay findable by the inference / visualization drivers.
+   run_dir = args.keras_path / f"run_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+   run_dir.mkdir(parents=True, exist_ok=True)
+   model.save(run_dir / "model.keras")
+   joblib.dump(scaler, run_dir / "scaler.joblib")
+
+   history_df = pd.DataFrame(history.history)
+   history_df.to_csv(args.results_path/"history.csv", index=False)
+
    print(f"trained {len(history.history['loss'])} epochs.")
 
 def show_keys(args):

@@ -27,7 +27,13 @@ from sklearn.preprocessing import StandardScaler
 USDM_PATH = r"raw_data/USDM/USDM_labels.csv"
 NOAA_PATH = r"raw_data/NOAA/NOAA_combined_2000-2026.csv"
 NDVI_PATH = r"raw_data/google_earth_engine/NDVI For Kerr County (2000-2024).csv"
-SOIL_PATH = r"raw_data/" #fill in later
+# teammate's consolidated weekly file -- source of the extra features below
+WEEKLY_EXTRAS_PATH = r"raw_data/kerr_standardized_weekly.csv"
+# full-coverage (2000+) new features that are safe to interpolate onto the master.
+# NOTE: the txmeso_* (Texas Mesonet) cols are intentionally EXCLUDED -- they only
+# begin in 2019, so they belong in a separate recent-years experiment rather than
+# being back-filled across 2000-2018.
+EXTRA_FEATURES = ["pdsi", "phdi", "pmdi", "soil_moisture"]
 
 # the only NOAA station with complete temperature over the full 2000-2026 span
 TEMP_STATION = "USC00414782"
@@ -81,13 +87,19 @@ def build_weekly_master(verbose=0, save_path=None):
     ndvi = ndvi[["date", "NDVI"]].rename(columns={"NDVI": "ndvi"})
     weekly_ndvi = _weekly(ndvi, ["ndvi"], "mean", weeks)
 
-    # ---- SOIL --------------------------------------------------------------
-    # insert here
+    # ---- extra features from the teammate's consolidated weekly file -------
+    # Take only the FEATURE columns and keep OUR USDM labels: the file's
+    # class_number uses a different encoding (no_drought=0..D4=5) than our
+    # pipeline (D0=0..D4=4, no_drought=5), so its labels are NOT used here.
+    extras = pd.read_csv(WEEKLY_EXTRAS_PATH)
+    extras["week_start"] = pd.to_datetime(extras["week_start"], format="%m/%d/%y")
+    extras = extras[["week_start"] + EXTRA_FEATURES]
 
     # ---- merge everything onto the USDM weekly grid ------------------------
     master_df = (usdm.merge(weekly_precip, on="week_start", how="left")
                   .merge(weekly_temp, on="week_start", how="left")
-                  .merge(weekly_ndvi, on="week_start", how="left"))
+                  .merge(weekly_ndvi, on="week_start", how="left")
+                  .merge(extras, on="week_start", how="left"))
 
     # ---- past drought state as a usable INPUT feature ----------------------
     # The USDM class is highly predictive of future drought (a "persistence" signal).
@@ -105,7 +117,7 @@ def build_weekly_master(verbose=0, save_path=None):
     master_df = master_df[master_df["week_start"] <= ndvi["date"].max()].reset_index(drop=True)
 
     # keep the grid contiguous: interpolate interior gaps, fill the edges
-    feature_cols = ["prcp", "tmax", "tmin", "ndvi"]
+    feature_cols = ["prcp", "tmax", "tmin", "ndvi"] + EXTRA_FEATURES
     master_df[feature_cols] = (master_df[feature_cols]
                             .interpolate(method="linear", limit_direction="both"))
 

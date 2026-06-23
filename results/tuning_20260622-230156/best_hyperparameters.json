@@ -1,0 +1,9 @@
+{
+  "input_window": 4,
+  "mean_macro_f1": 0.3424303194889193,
+  "clf__batch_size": 64,
+  "clf__dropout": 0.0,
+  "clf__learning_rate": 0.009062263471261952,
+  "clf__neurons": 16,
+  "clf__num_layers": 2
+}

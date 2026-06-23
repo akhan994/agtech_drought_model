@@ -1,3 +1,4 @@
+import tensorflow as tf
 
 class TrainingLogger(tf.keras.callbacks.Callback):
     def __init__(self, log_file):

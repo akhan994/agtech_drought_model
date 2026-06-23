@@ -13,6 +13,7 @@ dependencies:
     - plotly
     - joblib==1.3.2
     - ipykernel
-    - kaleido
+    - kaleido==0.2.1
     - nbformat
     - python-pptx
+    - scikeras

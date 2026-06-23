@@ -1,155 +1,141 @@
-# Repo Audit — drought model
+# Repo Audit — drought model (updated 2026-06-22)
 
-_A full pass over the repo. Grouped by severity. Line numbers are approximate and
-will drift as you edit. "Blocking" = stops the code from running at all._
-
----
-
-## A. Critical / blocking bugs (fix these first)
-
-1. **`parser.py` never returns the parser.** `create_parser()` builds `parser` but has no
-   `return parser` at the end → returns `None` → every caller crashes with
-   `AttributeError: 'NoneType' has no attribute 'parse_args'`. **This blocks the entire
-   config-driven path.** One line fix.
-
-2. **`build_model()` is called with the wrong second argument.**
-   `driver/training_driver.py` defines `build_model(input_dim, args)` but `main()` calls
-   `build_model(x_train.shape[1], y_train.shape[1])` — it passes an **int** (`6`) where
-   `args` is expected. Inside, `args.neurons` / `args.num_classes` will fail. Pass `args`.
-
-3. **`callbacks=early` must be a list.** In `training_driver.main()`,
-   `model.fit(..., callbacks=early)` passes a single callback object; Keras expects
-   `callbacks=[early]`.
-
-4. **`results_path` is a string but used as a Path.** Parser default is `'results'` (str),
-   but `training_driver` calls `args.results_path.mkdir(...)` and `args.results_path / "..."`.
-   A str has no `.mkdir`. Make the arg `type=Path` (or wrap with `Path(...)`).
-
-5. **`visualization_driver.loss_curve()` references undefined names.** It uses `y_true`,
-   `y_pred`, `acc`, `macro_f1`, and `pred_df`, none of which are passed in or defined in
-   the function (they live in `inference`). As written it will `NameError`. The confusion
-   matrix + timeseries blocks need those values passed in as arguments.
-
-6. **`training_logger.py` uses `tf` without importing it.** `class TrainingLogger(tf.keras...)`
-   → `NameError` the moment it's imported. Add `import tensorflow as tf`. (Not currently
-   imported anywhere, but broken.)
+_Re-verified against the actual code (not just the DONE marks). Line numbers drift as you edit._
 
 ---
 
-## B. Config ↔ parser mismatches (block the config path once A.1 is fixed)
+## ✅ Completed since last audit
 
-`configs/configs.txt` uses flags the parser doesn't define (argparse will reject them):
-
-| Config flag | Problem | Fix |
-|---|---|---|
-| `--class_models` | not defined | parser has `--class_names` — rename in config |
-| `--num_classes` | not defined | parser has `--num_output_neurons` — pick ONE name |
-| `--hidden_activation` | not defined | parser has `--activation_function` — align |
-| `--feature_cols` | **not defined at all** | add to parser (drivers + preparing_data need it) |
-| `--scale=true` | `--scale` is `store_true` | use a bare `--scale` line (no `=true`) |
-| `--optimizer=adam` | listed twice | remove the duplicate |
-| `--v` | works only by abbreviation of `--verbose` | use `-v` |
-
-Also referenced in code but mismatched:
-- `training_driver` uses `args.monitor`; parser defines `--call_back_monitor` (no `--monitor`).
-- `training_driver` uses `args.num_classes`, `args.hidden_activation`; parser doesn't define them.
-- EarlyStopping uses `patience=args.lr_reducer_patience` — probably meant `early_stop_patience`.
-
-**Root cause: the parser and config drifted apart.** Make the parser the single source of
-truth, then make the config + drivers use those exact names.
+- ~~`parser.py` never returns the parser~~ → **fixed** (`return parser`).
+- ~~`results_path` is a str but used as a Path~~ → **fixed** (`type=Path`).
+- ~~`--metrics` default `[0]`~~ → **fixed** (now `None`).
+- ~~`--feature_cols` / `--class_names` missing from parser~~ → **added**.
+- ~~`--activation_function` vs config mismatch~~ → **renamed to `--hidden_activation`** (parser + config + driver agree).
+- ~~`--num_classes` vs `--num_output_neurons` drift~~ → **unified on `num_output_neurons`**.
+- ~~`config --scale=true` / `--v` / `--class_models`~~ → **fixed** (`--scale` bare, `-v`, `--class_names`).
+- ~~`training_logger.py` missing `import tf`~~ → **fixed**.
+- ~~`callbacks=early` not a list~~ → **fixed** (`callbacks=[early]`).
+- ~~EarlyStopping used `args.monitor` / wrong patience~~ → **fixed** (`call_back_monitor` + `early_stop_patience`).
+- ~~`build_model` called without `args`~~ → **args now passed** (but see A1 — input_dim is now wrong).
+- ~~`inference_driver` `to_csv` inside the loop~~ → **fixed** (de-indented).
+- ~~`visualization_driver.loss_curve` undefined names + dup figure~~ → **fixed** (and split into 3 functions).
+- ~~Two driver locations / stub `tuning_driver`~~ → **consolidated into root `driver/`**.
+- **New:** `class_weight="balanced"` added to `tuning_driver_randomsearch.py`; it runs end-to-end.
 
 ---
 
-## C. Structural / organization issues
+## A. Still-blocking bugs
 
-1. **Two driver locations.** Real drivers live in root `driver/`; my pseudocode landed in
-   `src/driver/` (`tuning_driver.py`, `explainability_driver.py`). There are now **two**
-   `tuning_driver.py` files (a stub in `driver/`, pseudocode in `src/driver/`). Pick ONE
-   location (recommend `driver/` to match your real ones) and move the pseudocode there.
+1. **`training_driver` passes a TUPLE as `input_dim`.** Line ~58:
+   `build_model((x_train.shape[1], y_train.shape[1]), args)` → inside, `Input(shape=(input_dim,))`
+   becomes `Input(shape=((20,6),))`. Pass just the feature count: `build_model(x_train.shape[1], args)`.
+   (The `args` half is fixed; the input_dim half got broken.)
 
-2. **No `__init__.py` anywhere.** The `from src.data_prep...` / `from src.helper...` imports
-   only work via implicit namespace packages **when run from the repo root**. The root
-   `driver/` folder isn't a package either. Either commit to "always run from root with
-   `python -m`", or add `__init__.py` files and a consistent package layout. Document it.
+2. **`model.save(...)` line has 3 problems** (training_driver ~line 68):
+   - `args.keras_path` — **parser defines `--keras_files_path`, not `keras_path`** → `AttributeError`.
+   - `datetime.now()` — file does `import datetime`, so it must be `datetime.datetime.now()` (or
+     `from datetime import datetime`). Same bug sits in `tuning_driver.py`.
+   - the keras output dir is never created (`.mkdir`), so the save path may not exist.
 
-3. **Entry points are empty.** `scripts/run_training.py` is still a commented stub;
-   `run_inference.py` and `run_tuning.py` are 0 bytes. Nothing wires parser → config →
-   driver, so the config-driven pipeline cannot actually be launched yet.
+3. **`visualization_driver.confusion_matrix()` is doubly broken:**
+   - the function name **shadows the imported `confusion_matrix`** from sklearn (line 7), so the call
+     on line ~24 recurses into itself instead of sklearn. Rename the function (e.g. `plot_confusion`).
+   - references `acc` and `macro_f1` (line ~28) that are **not passed in** → `NameError`.
 
-4. **No orchestration.** `training_driver.main()` trains but never calls inference or
-   visualization, and the run scripts don't chain them. Decide who calls whom.
+4. **`visualization_driver.time_series()` references `y_pred`** (line ~49) which isn't a parameter
+   (only `pred_df, y_true, args`) → `NameError`. Pass `y_pred` in.
 
----
-
-## D. Per-file notes
-
-**`driver/training_driver.py`**
-- Does **not save the model or scaler** (`model.save(...)`, `joblib.dump(scaler, ...)`).
-  Inference + explainability both depend on loading these → currently impossible. (See E.)
-- Builds `model_datasplit` dict, good — but then mostly re-fetches via `.get(...)`; fine,
-  just verbose.
-
-**`driver/inference_driver.py`**
-- Imports `Sequential/Input/Dense/EarlyStopping` but never uses them (dead imports).
-- Never **loads** a `.keras` model (no `load_model`), despite the docstring. It receives a
-  `model` arg, so something upstream must load + pass it.
-- Indentation bug (lines ~39–41): the `pred_df[...] = ...` and `pred_df.to_csv(...)` are
-  inside the `for` loop, so the CSV is rewritten every iteration and `to_csv` shouldn't be
-  in the loop. De-indent `to_csv` out of the loop.
-
-**`driver/visualization_driver.py`**
-- Duplicate plotly imports; duplicated loss-figure creation (lines ~18–25).
-- Function is named `loss_curve` but also does confusion matrix + timeseries — split or
-  rename, and pass in `y_true`, `y_pred`, `pred_df`, `acc`, `macro_f1` (see A.5).
-
-**`driver/tuning_driver.py`** — one-line stub; superseded by the `src/driver/` pseudocode.
-
-**`src/data_prep/preparing_data.py`** — healthy. `SOIL_PATH` is a placeholder; `usdm_severity`
-feature added and tested. (Minor: `usdm_severity` isn't in the NaN/contiguity guard, but it's
-complete by construction from the label grid.)
-
-**`parser.py`** — besides A.1/B: `--metrics` default is `[0]` (invalid Keras metric); still
-carries dead WaterTemp args (`temperature_list`, `pred_atp_interval`, `input_structure`,
-`tune_train_test`, `rotation_list`, `start/end_iteration`, `kernel_regularizer`, `min_delta`).
-Prune so the config surface matches the model.
+5. **Manual `tuning_driver.py` is still broken / unchanged** (you've been using the randomsearch one):
+   - **syntax error** at ~line 66 (unquoted `strftime` format, mismatched parens, `mkdir` args jammed
+     into `Path(...)`) — the file won't even import.
+   - `import datetime` → `datetime.now()` fails.
+   - `from src.driver.training_driver import build_model` — wrong path (drivers are in root `driver/`).
+   - `get_search_space()` called without its `args` argument (line ~69).
+   - `K.clear_session` missing `()`.
+   - `build_model(input_dim=..., num_layers=..., ...)` — but `build_model` is `(input_dim, args)`,
+     it doesn't take those kwargs (the "parametrize build_model" prerequisite isn't done).
+   - `params["batch_size"]` — `batch_size` isn't in the search space → KeyError.
+   - `callbacks=args.call_back_monitor` — that's a string, not a callback list.
+   - rank/save block is inside the trial loop; `args.results_folder` doesn't exist (it's `results_path`).
+   - **Decide:** keep this manual file or delete it in favor of `tuning_driver_randomsearch.py`.
 
 ---
 
-## E. Things to keep in mind (not bugs)
+## B. Config ↔ parser
 
-- **Save model + scaler in training.** Without `model.save()` + `joblib.dump(scaler)`, the
-  inference and explainability drivers have nothing to load. This is the missing link
-  between train → infer → explain.
-- **Class imbalance is the top modeling issue.** D0/D1 are barely learned and **D4 has zero
-  examples in validation** (artifact of the chronological split). Class weights + a
-  validation strategy that includes every class are the highest-value fixes.
-- **Baseline is ~0.42 accuracy / ~0.30 macro-F1** — a working scaffold, not a tuned model.
-- **`usdm_severity` is a strong persistence feature.** Expect XAI to show the model leaning
-  on it; report that honestly.
-- **Data span is capped at ~2024** (NDVI ends 2024) and is **single-county**. Pooling
-  counties is the main way to grow data + rare-class coverage.
-- **Always evaluate with macro-F1 + confusion matrix**, never accuracy alone (imbalance).
+**`configs/training.txt` — nearly aligned now ✅**, one mismatch left:
+- `--keras_path=models` (config) and `args.keras_path` (driver) vs **`--keras_files_path`** (parser).
+  Three names for one thing — pick one (recommend `--keras_path` everywhere; shorter).
+
+**`configs/search_space.txt` — heavily misaligned** (looks copied from WaterTemp's *keras-tuner* config,
+but the manual tuner is sklearn-based). Args not defined in the parser → argparse will reject:
+`--results_folder`, `--data_set`, `--max_trials`, `--executions_per_trial`, `--unit_list`,
+`--activation_function_list`, `--layers_list`, `--tuner_objective`, `--activation_function` (renamed),
+and `--input_window` is given 4 values but the parser arg is a single `int`.
+Also `--metrics macro_f1` / `--tuner_objective macro_f1` aren't Keras-computable metrics.
+→ This config doesn't match either tuner. If you keep the sklearn tuners, rebuild it around their
+actual args (`n_iter`, `random_state`, window list, etc.).
+
+---
+
+## C. Structural
+
+1. **Still no `__init__.py` anywhere**, and imports are now *inconsistent*: the drivers import
+   `from src.data_prep...` (fine from repo root) but `tuning_driver.py` imports
+   `from src.driver.training_driver` — **wrong**, drivers live in root `driver/`, so it should be
+   `from driver.training_driver`. Pick one convention and make every import match.
+2. **Entry points still empty:** `run_inference.py` (0 B), `run_tuning.py` (0 B),
+   `run_training.py` (comment stub). Nothing wires parser → config → driver.
+3. **No orchestration:** `training_driver` has no `__main__` and never calls inference/visualization;
+   nothing chains train → infer → visualize.
+4. `tuning_driver_randomsearch.py` is the **one driver that actually runs** end-to-end today.
+
+---
+
+## D. Per-file status
+
+- **`parser.py`** — healthy. Remaining dead args to prune: `rotation_list`, `input_structure`,
+  `kernel_regularizer`, `start_iteration`/`end_iteration`, `factor`, `min_lr`, `min_delta`.
+- **`training_driver.py`** — close, but A1 + A2 block it; **still doesn't save the scaler**
+  (`joblib.dump`) — inference/XAI need it.
+- **`inference_driver.py`** — indentation fixed; still has dead imports and no `load_model`
+  (relies on a caller passing `model`, which nothing does yet).
+- **`visualization_driver.py`** — `loss_curve` good; `confusion_matrix` + `time_series` broken (A3/A4).
+- **`tuning_driver.py`** — broken (A5); decide its fate.
+- **`tuning_driver_randomsearch.py`** — ✅ runs; nested window-grid + RandomizedSearchCV + macro-F1 +
+  `class_weight="balanced"`.
+- **`explainability_driver.py`** — still pseudocode (expected).
+- **`preparing_data.py`** — healthy; `usdm_severity` feature added/tested; `SOIL_PATH` placeholder.
+
+---
+
+## E. Methodology notes (keep in mind)
+
+- **Save the scaler in training** (`joblib.dump`) — still the missing link for inference + XAI.
+- **Class imbalance is the top issue.** `class_weight="balanced"` is now in the randomsearch tuner;
+  carry it into `training_driver` too. D4 still absent from the fixed validation split → favor
+  TimeSeriesSplit CV (already used in the randomsearch tuner).
+- **Tuning didn't beat baseline (~0.34 macro-F1)** → confirms imbalance, not architecture, is the cap.
+- **Ensemble idea** (from WaterTemp): soft-voting average of N seeded models → stability + a confidence
+  signal; score with RPS/Brier (classification analogs of CRPS). Polish step, after imbalance.
+- Single county, data capped at ~2024 (NDVI). Pooling counties is the main way to grow data.
 
 ---
 
 ## F. Housekeeping
 
-- `README.txt` is slightly stale: says `preparingData` returns 6 arrays; it actually returns
-  a 10-tuple (`+ dates + scaler`).
+- `README.txt` still says `preparingData` returns 6 arrays (it returns a 10-tuple).
 - `AIML_notes.txt` appears empty.
-- `TODO.txt` has a pasted assistant response in it (lines ~7–23) — clutter; trim to the task list.
+- `TODO.txt` still has a pasted assistant response in it — trim to the task list.
 
 ---
 
 ## Suggested fix order
 
-1. `return parser` (A.1) — unblocks everything.
-2. Align parser names ↔ config ↔ driver attribute names (A.2, B). Prune dead args.
-3. Fix the driver bugs: `build_model(args)`, `callbacks=[early]`, `results_path` as Path,
-   `monitor`/patience names (A.2–A.4).
-4. Add **model + scaler saving** to training (E) — prerequisite for infer/XAI.
-5. Fix `visualization_driver` to receive the values it needs (A.5);
-   fix `inference_driver` indentation + add `load_model` (D).
-6. Write the thin `scripts/run_*.py` entry points to wire parser → config → drivers (C.3).
-7. Consolidate driver locations + decide packaging/`__init__.py` (C.1, C.2).
-8. Then modeling work: class weights, validation split, tuning, XAI.
+1. `training_driver`: fix `input_dim` (A1) + the `model.save` line (A2) + **add `joblib.dump(scaler)`**.
+2. Decide `keras_path` vs `keras_files_path` and make parser/config/driver agree (B).
+3. Fix `visualization_driver` `confusion_matrix`/`time_series` (A3/A4).
+4. Settle the manual `tuning_driver.py` — fix or delete (A5); rebuild `search_space.txt` to match (B).
+5. Fix import convention + add `__init__.py` (or commit to run-from-root) (C1).
+6. Write the thin `run_*.py` entry points and the train→infer→viz orchestration (C2/C3).
+7. Then modeling: carry `class_weight` into training, ensemble + RPS, county pooling.
