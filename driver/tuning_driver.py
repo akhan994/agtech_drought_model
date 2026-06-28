@@ -1,17 +1,13 @@
 """
-tuning_driver_ordinal_QWK.py - QWK-objective copy of tuning_driver_ordinal.py.
 
-Identical to driver/tuning_driver_ordinal.py (same regression-on-rank model, same
-search space, same window grid, same RANDOM_STATE -> same candidate combos), EXCEPT
-it scores each combo by Quadratic-Weighted Kappa (QWK) instead of macro-F1. QWK
-directly rewards staying close on the severity scale, which is the point of going
-ordinal.
+This tuning driver scores each combo by Quadratic-Weighted Kappa (QWK).
+QWK directly rewards staying close on the severity scale, which is the point of going ordinal.
 
 Because the regressor outputs continuous values, the scorer ROUNDS to the nearest
 rank before computing kappa (you cannot pass raw floats to cohen_kappa_score).
 
 Run from the repo root:
-    python -m driver.tuning_driver_ordinal_QWK
+    python -m driver.tuning_driver
 """
 
 import json

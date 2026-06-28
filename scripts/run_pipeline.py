@@ -16,7 +16,7 @@ from pathlib import Path
 from src.helper.parser import create_parser
 from driver.training_driver import main as train_model
 from driver.inference_driver import inference
-from driver.visualization_driver import loss_curve, plot_confusion_matrix, time_series
+from driver.visualization_driver import loss_curve, plot_confusion_matrix, time_series, write_configs
 
 
 def run(args):
@@ -30,6 +30,8 @@ def run(args):
     loss_curve(args)         # all three read the artifacts the steps above wrote
     plot_confusion_matrix(args)
     time_series(args)
+
+    write_configs(args)
 
     print("\n=== DONE ===")
 

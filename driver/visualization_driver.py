@@ -1,3 +1,17 @@
+''' 
+
+This file creates visualizations of trained models. 
+
+Contains: 
+    loss_curve visualization
+    plot_confusion_matrix
+    time_series
+    write_configs
+
+'''
+
+
+
 import plotly.graph_objects as go
 import plotly.express as px
 from pathlib import Path
@@ -27,8 +41,8 @@ def plot_confusion_matrix(args):
 
     df = pd.read_csv(args.results_path/"test_predictions.csv")
 
-    y_true = df["true_idx"]
-    y_pred = df["pred_idx"]
+    y_true = df["true_index"]
+    y_pred = df["pred_index"]
 
     qwk = cohen_kappa_score(y_true, y_pred, weights="quadratic")
     macro_f1 = f1_score(y_true, y_pred, average="macro")
@@ -74,3 +88,8 @@ def time_series(args):
     ts.write_html(args.results_path / "severity_timeseries.html")
 
     print(f"wrote results -> {args.results_path}/")
+
+def write_configs(args):
+    with open(args.results_path/"model_configs.txt", "w", encoding="utf-8") as file:
+        for key, value in vars(args).items():
+            file.write(f"{key}: {value}\n")
